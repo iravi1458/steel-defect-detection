@@ -62,14 +62,6 @@ Evaluated on 100 held-out images per class, none seen in training.
 
 That last point has a practical consequence: an unknown share of the measured 5% false-positive rate consists of correct detections on mislabelled images. **The true false-positive rate is therefore better than the reported figure**, though by how much cannot be quantified without re-annotating the negatives by hand.
 
-### What detections look like
-
-![Predictions](figures/fig_predictions.png)
-
-Confident detections (top) are unambiguous — spalling, heavy scoring, gouging. Misses (middle, p = 0.115 and 0.154) are low-contrast diffuse texture with no strong localised feature.
-
-The two "false alarms" (bottom, p = 0.96 and 0.86) both show visible pitting and dark blotching. They are labelled clean in the dataset. This is the contamination described below surfacing directly in the results: some measured false positives are correct detections scored against incorrect labels, so the true false-positive rate is likely better than reported.
-
 ---
 
 ## Method
