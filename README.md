@@ -1,127 +1,192 @@
-# Bias-Aware Hybrid CNN–Transformer Ensemble for Multilingual Offline Signature Verification
+# Steel Surface Defect Detection
 
-Writer-independent offline signature verification across Hindi, Bengali, and English scripts, using a calibrated score-level ensemble of a convolutional (ResNet-18) and a convolution–Transformer (CvT-13) backbone, evaluated under a leakage-controlled writer-disjoint protocol.
+Image-level defect classification on the [Severstal](https://www.kaggle.com/competitions/severstal-steel-defect-detection) hot-rolled steel strip dataset — 12,568 line-scan camera images from a flat-rolled production line, spanning four surface defect classes that differ by more than an order of magnitude in both frequency and physical extent.
 
-M.Sc. thesis, Department of Computer Science, Bishop's University (2026). Supervisor: Dr. Mohammed Ayoub Alaoui Mhamdi.
+Given a strip image, the system returns a defect probability and a PASS / REVIEW decision against a threshold you choose. That threshold is calibrated on known-good material to a target false-alarm rate — so the operating point is set by inspection economics, not by whatever maximised accuracy on a test split.
+
+There is no training loop. A frozen self-supervised backbone (DINOv2) converts each image to a feature vector in one forward pass, and a linear classifier is fit on top in under a second on CPU. No GPU cluster, no fine-tuning, no hyperparameter search — which also means retraining on plant-specific imagery is a minutes-long job, not a project.
 
 ---
 
-## Problem
+## Result
 
-Offline signature verification is used in banking, legal, and identity-management settings, but two problems recur in the literature:
+**Out of every 100 defective strips, the system flags 93 while stopping the line unnecessarily on 5% of good strips. Tighten it to 1% unnecessary stops and it still catches 81.**
 
-1. **Writer leakage.** Many reported results come from splits where the same writer appears in both training and test data, so the metric measures writer memorisation as much as verification ability.
-2. **Heuristic fusion.** When multiple backbones are combined, fusion weights are usually picked by a fixed rule, without first establishing that the backbones are actually complementary or checking how the fused system behaves across scripts.
+Cross-validated AUROC: **0.9748** (5-fold, range 0.968–0.979). Held-out test AUROC: 0.9884.
 
-This project addresses both, and — importantly — reports what the evidence supports rather than assuming the proposed method wins.
+*Reading the numbers:* **recall** is the share of real defects caught. **False-positive rate** is the share of good strips wrongly flagged — each one costs an operator a few minutes of review. The two move together: catching more defects always means reviewing more good material. **AUROC** summarises performance across every possible threshold, where 0.5 is a coin flip and 1.0 is perfect.
 
-## Approach
+### Operating points
 
-- **ResNet-18 branch** — convolutional feature extraction for local stroke structure
-- **CvT-13 branch** — convolution–Transformer branch for long-range spatial dependencies
-- **Siamese pairwise verifier** — each branch scores a reference–query pair via `[|z_r − z_q| ‖ z_r ⊙ z_q]` into a verification head
-- **Platt calibration** — each branch's logits calibrated on validation only, placing both in a common log-odds space (monotonic, so individual EER/AUC unchanged)
-- **BAES fusion** — Bias-Aware Ensemble Selection picks the fusion weight by minimising `J(ω) = EER_val(ω) + α · std_c(EER_val^(c))`, generalising ordinary weighted fusion (recovered at α = 0)
-- **SSWDS protocol** — Strict Script-aware Writer-Disjoint Splitter partitions *writers*, not samples, with per-script proportions preserved and a fixed seed for reproducibility
+| False-positive rate | Defect recall |
+|---|---|
+| 1% | 81.0% |
+| 5% | 93.0% |
+| 10% | 96.0% |
+| 20% | 100.0% |
 
-## Datasets
+### What that means per 1,000 strips
 
-| Corpus | Script | Writers | Per writer |
+| Operating point | Defects caught | Defects missed | Unnecessary stops |
 |---|---|---|---|
-| BHSig260 | Hindi | 160 | 24 genuine, 30 skilled forgeries |
-| BHSig260 | Bengali | 100 | 24 genuine, 30 skilled forgeries |
-| CEDAR | English | 55 | 24 genuine, 24 skilled forgeries |
+| 1% FPR | 81 | 19 | 9 |
+| 5% FPR | 93 | 7 | 45 |
+| 10% FPR | 96 | 4 | 90 |
+| 20% FPR | 100 | 0 | 180 |
 
-Datasets are not redistributed here. See the original sources (Indian Statistical Institute for BHSig260; CEDAR, University at Buffalo).
+*Assumes 10% defect prevalence — an illustrative figure, not a measured property of the dataset. Choosing between these rows is a cost decision: it depends on what a missed defect costs relative to a few minutes of operator review.*
 
----
+### Per-class recall @5% FPR
 
-## Results
+| Class | Instances in dataset | Median defect area | Recall |
+|---|---|---|---|
+| 1 | 897 | 0.81% | 94.0% |
+| 2 | 247 | 0.72% | 94.0% |
+| 3 | 5,150 | 2.92% | 99.0% |
+| 4 | 801 | 6.19% | 99.0% |
 
-All results on 1,962 writer-disjoint test trials (Hindi 1,008 / Bengali 630 / English 324), thresholds selected on validation and applied unchanged at test.
+Evaluated on 100 held-out images per class, none seen in training.
 
-### RQ1 — Does the evaluation protocol matter?
+![ROC](figures/fig_roc.png)
+![Operating characteristic](figures/fig_operating.png)
 
-| Protocol | Train∩Val | Train∩Test | Val∩Test | AUC (seed 42) | EER (seed 42) | AUC (5-seed) | EER (5-seed) |
-|---|---|---|---|---|---|---|---|
-| SSWDS | 0 | 0 | 0 | 0.870 | 0.193 | 0.834 | 0.228 |
-| Writer-random | 308 | 307 | 307 | 0.838 | 0.229 | 0.835 | 0.230 |
+### What detections actually look like
 
-The writer-random split leaked over 300 writers across every pair of partitions. On a single seed SSWDS looked clearly better — but that gap collapsed once averaged over five seeds. The real difference is **trustworthiness of measurement, not achievable performance**: writer-random scores mix verification ability with writer memorisation, and are less stable across seeds (test AUC std 0.0219 vs 0.0169).
+![Predictions](figures/fig_predictions.png)
 
-### RQ2 — Are the branches complementary?
+**Confident detections (top three, p ≈ 1.00).** Unambiguous surface damage — heavy scoring, spalling, gouging. These are the cases where any inspection method would agree.
 
-| Branch | EER | AUC | Hindi EER | Bengali EER | English EER |
-|---|---|---|---|---|---|
-| ResNet-18 + contrastive | 0.0404 | 0.9944 | 0.0667 | 0.0244 | 0.0 |
-| CvT-13 + contrastive | 0.0808 | 0.9792 | 0.0931 | 0.0489 | 0.0 |
+**Misses (middle two, p = 0.115 and 0.154).** Both are low-contrast, diffuse surface texture with no strong localised feature. The failure mode is consistent: the system is confident about discrete damage and uncertain about broad, subtle variation in surface finish. If those matter on a given line, they are the cases to route to manual inspection regardless of model output.
 
-Complementarity, measured directly rather than assumed:
+**"False alarms" (bottom two, p = 0.963 and 0.860).** Both are labelled clean in the dataset. Both visibly contain pitting and dark blotching. These are not model errors — they are correct detections scored against incorrect labels.
 
-| Scope | Disagreement | Double-fault | Yule Q | N10 | N01 |
-|---|---|---|---|---|---|
-| Overall | 0.0872 | 0.0148 | 0.806 | 128 | 43 |
-| Hindi | 0.1250 | 0.0248 | 0.741 | 91 | 35 |
-| Bengali | 0.0714 | 0.0063 | 0.774 | 37 | 8 |
-| English | 0.0000 | 0.0000 | — | 0 | 0 |
+That last point has a practical consequence: an unknown share of the measured 5% false-positive rate consists of correct detections on mislabelled images. **The true false-positive rate is therefore better than the reported figure**, though by how much cannot be quantified without re-annotating the negatives by hand.
 
-Yule Q = 0.806 indicates the branches are only **modestly** complementary — they largely succeed and fail on the same trials. Of 171 disagreements, 128 are simply ResNet-18 being right where CvT-13 is wrong, consistent with ResNet-18 being the stronger branch rather than the two capturing distinct failure modes. This predicts a modest fusion gain, which is what RQ3 finds.
+### What detections look like
 
-### RQ3 — Does bias-aware fusion help?
+![Predictions](figures/fig_predictions.png)
 
-| Configuration | EER | AUC | FAR | FRR | ACC | Cross-script std |
-|---|---|---|---|---|---|---|
-| ResNet-18 + contrastive | 0.0404 | 0.9944 | 0.0274 | 0.0590 | 0.9633 | 0.0275 |
-| CvT-13 + contrastive | 0.0808 | 0.9792 | 0.0794 | 0.0816 | 0.9200 | 0.0380 |
-| Simple average | 0.0382 | 0.9949 | 0.0346 | 0.0365 | 0.9648 | **0.0250** |
-| Weighted fusion (w=0.65) | **0.0368** | **0.9954** | 0.0325 | 0.0451 | 0.9638 | 0.0267 |
-| BAES (α=0.25, w=0.65) | **0.0368** | **0.9954** | 0.0325 | 0.0451 | 0.9638 | 0.0267 |
+Confident detections (top) are unambiguous — spalling, heavy scoring, gouging. Misses (middle, p = 0.115 and 0.154) are low-contrast diffuse texture with no strong localised feature.
 
-Fusion improves on the stronger individual branch: **8.9% relative EER reduction** over ResNet-18 alone.
-
-**On BAES specifically — a null result, reported as such.** The weight search returns w\* = 0.65 for every α ≤ 7, including the reported α = 0.25. At these settings BAES selects *exactly the same weight* as ordinary validation-EER-minimising fusion, which is why the two rows above are identical. The disparity term is not inert — the minimiser shifts to w\* = 0.55 at α = 8, confirming BAES is a genuine generalisation rather than a degenerate one — but the trade-off it exposes is unfavourable on this corpus: that shift reduces cross-script standard deviation only from 0.0172 to 0.0169 while degrading validation EER from 0.0389 to 0.0419, roughly a tenfold larger movement in accuracy than in balance. The accuracy-optimal weight was already near disparity-optimal for this branch pair. The simple-average baseline, with no balancing mechanism at all, happens to achieve the lowest cross-script spread.
-
-This is reported as an honest empirical finding rather than reframed as a success. Whether BAES delivers a favourable trade-off on a corpus with genuine cross-script imbalance remains untested.
+The two "false alarms" (bottom, p = 0.96 and 0.86) both show visible pitting and dark blotching. They are labelled clean in the dataset. This is the contamination described below surfacing directly in the results: some measured false positives are correct detections scored against incorrect labels, so the true false-positive rate is likely better than reported.
 
 ---
 
-## Repository structure
+## Method
 
-```
-resnet18_pipeline.ipynb   ResNet-18 branch: training, calibration, evaluation
-cvt13_pipeline.ipynb      CvT-13 branch: training, calibration, evaluation
-ensemble_baes.ipynb       Score-level fusion, BAES weight search, per-script analysis
-signature_common.py       Shared preprocessing, SSWDS splitter, trial construction, metrics
-complementarity.py        Disagreement, double-fault, and Yule Q statistics
-experiments/              Earlier experimental notebooks (baselines, ablations, Swin, RF/XGBoost variants)
-```
+### Feature extraction
 
-## Stack
+**DINOv2 ViT-S/14, frozen.** A Vision Transformer trained self-supervised on 142M images. Self-supervised features transfer better to texture and out-of-domain data than ImageNet-supervised features, which are optimised for object categories irrelevant to steel. Freezing it means no training on consumer hardware — extraction is a single forward pass.
 
-Python · PyTorch · timm · scikit-learn · NumPy · pandas · OpenCV · Matplotlib
+- Input resized to **252×1596**, preserving native aspect ratio. This matters: at 224×224 the horizontal axis compresses 7× and thin longitudinal defects disappear.
+- Patch tokens from layers 3 and 9, concatenated (768-dim). Early layers carry texture and edges; mid layers carry structure. Defects appear at both scales.
+- 3×3 average pooling, stride 2 → 513 patches × 768 dims per image.
+
+### Classifier
+
+Patch features mean-pooled to one 768-dim vector per image. Logistic regression on 1,000 clean + 1,000 defective images, evaluated on 200 clean + 100 defective held out, plus 100 held-out images per defect class.
+
+Logistic regression rather than fine-tuning, deliberately: fine-tuning would change the representation and prevent a like-for-like comparison with the unsupervised branch below. A linear probe succeeding means the frozen features already contain the necessary information.
+
+### Calibration — how the threshold is chosen
+
+The classifier outputs a probability between 0 and 1. Turning that into a PASS / REVIEW decision requires a cut-off, and where you put it determines everything about how the system behaves in practice.
+
+The cut-off here is set from the score distribution of **known-good material only** — never using test defects. To operate at a 5% false-alarm rate, take the 95th percentile of the scores the model assigns to good strips and use that as the threshold. By construction, 5% of good material will exceed it.
+
+This mirrors deployment. A plant commissioning an inspection system has plenty of good material to run through it and no catalogue of labelled defects waiting in advance. Calibrating on the negatives is the only procedure that works on day one — and it means the false-alarm rate is a dial the plant sets, not a property of the model.
+
+---
+
+## Training data was the binding constraint
+
+The first configuration used 300 clean + 300 defective images. Tripling that produced the single largest improvement in the project:
+
+| | 300 + 300 | 1,000 + 1,000 |
+|---|---|---|
+| AUROC (5-fold CV) | 0.9536 | **0.9748** |
+| Recall @1% FPR | 66.0% | **81.0%** |
+| Recall @5% FPR | 78.0% | **93.0%** |
+| Class 2 recall @5% FPR | 72.0% | **94.0%** |
+
+Class 2 is the rarest defect (247 instances) and the smallest by median area. At 300 training images its recall lagged the other classes by 12–19 points, which looked like a property of the defect type. It was not — it was a data-quantity artifact, and it disappeared with more labels.
+
+**This remains a floor, not a ceiling.** The dataset offers 6,666 labelled defective images against the 2,000 used here. Larger DINOv2 variants (ViT-B/L) trade memory for accuracy. Fine-tuning the backbone rather than freezing it typically adds several points. Mean pooling discards spatial information that a patch-attention head would retain. The remaining gap to published results on this dataset is mostly compute and labels rather than method.
+
+---
+
+## Comparison: unsupervised anomaly detection on identical features
+
+A natural question for industrial inspection is whether defect labels are needed at all. Unsupervised anomaly detection learns a model of *normal* material and flags deviation, which is attractive because new defect modes appear that no labelled set anticipated.
+
+This was tested using the same frozen features, so the only variable is whether labels are used.
+
+**Method.** PatchCore-style memory bank built from patches of 500 unannotated images, subsampled to 150,000 entries. Test patches matched by cosine distance to their nearest bank neighbour; image score is the mean distance of the 10 most anomalous patches. Deviates from the original PatchCore in using random subsampling rather than greedy coreset selection.
+
+**Result.**
+
+| Method | AUROC | Recall @1% FPR | Recall @5% FPR |
+|---|---|---|---|
+| Supervised | **0.988** | 81.0% | **93.0%** |
+| Unsupervised | 0.754 | 1.5% | 11.5% |
+
+Per-class recall @5% FPR was 0.0% / 1.0% / 7.0% / 14.0% for classes 1–4 — effectively blind at any usable operating point.
+
+### Why it failed: the unannotated images are not defect-free
+
+Severstal never claimed the 5,902 unannotated images contain no defects — they are simply *unlabelled*. Treating them as normal poisons any method that learns a model of normality.
+
+The evidence is direct. Ranking unannotated images by anomaly score and inspecting the highest-scoring ones:
+
+![Contamination](figures/fig_contamination.png)
+
+The top-scoring "clean" images show extensive surface flaking and spalling. Some low-scoring ones contain visible bright inclusions, so contamination runs in both directions.
+
+### Ablations
+
+| Configuration | AUROC |
+|---|---|
+| 224×224 squashed input, 5k memory bank | 0.661 |
+| 252×1596, 2.5k bank | 0.529 |
+| 252×1596, 50k bank | 0.728 |
+| 252×1596, 150k bank | **0.754** |
+| 150k bank, training set filtered to cleanest 70% | 0.728 |
+
+Aspect ratio matters more than expected. Memory bank size matters more still — at 2,565 entries the bank was too sparse to cover normal variation and performance fell near chance.
+
+Outlier filtering was expected to help if contamination were the sole problem. It made things worse, indicating the frozen features do not cleanly separate these defects by nearest-neighbour distance regardless of training-set purity.
+
+**Practical conclusion:** unsupervised anomaly detection is viable when clean reference material is guaranteed. It is unreliable when "unlabelled" is silently treated as "normal" — a common condition in datasets assembled from production data.
+
+---
+
+## Dataset
+
+12,568 images at 1600×256 px from line-scan cameras on a flat-rolled production line. The 6.25:1 aspect ratio reflects the imaging geometry — the camera spans strip width while material travels beneath it.
+
+7,095 run-length-encoded defect masks across 6,666 images in four classes. 6,239 images carry one defect type, 425 carry two, 2 carry three. The remaining 5,902 images are unannotated.
+
+![Dataset samples](figures/dataset_samples.png)
+
+---
 
 ## Limitations
 
-- Three scripts from two corpora; the English test subset (324 trials) is smaller than Hindi (1,008) or Bengali (630), which limits precision of the per-script disparity estimate for English.
-- Only two backbones evaluated — the observed complementarity may not generalise to other CNN/Transformer pairings.
-- Score-level fusion only; feature-level, decision-level, and attention-based fusion are future work.
+- **Image-level classification, not localization.** The system detects that a defect is present, not where.
+- **Unverified negatives — the false-positive rate is pessimistic.** The images used as "clean" are unannotated, not confirmed defect-free. Two of the highest-scoring false alarms visibly contain pitting and blotching (see *What detections actually look like*), meaning they are correct detections penalised by incorrect labels. Every false-positive figure in this README should therefore be read as an upper bound. Quantifying the real rate would require hand-re-annotating the negative set.
+- **Multi-defect images.** 427 images carry more than one defect type, making per-class recall approximate.
+- **Public dataset.** Not evaluated on plant-specific imagery; domain shift is untested.
+- **Test set size.** 200 clean and 100 defective. Differences of 1–2 points are within noise; the cross-validated figure over 2,000 images is the more reliable number.
 
-## Citation
+---
 
-```bibtex
-@mastersthesis{ranjan2026baes,
-  title  = {Bias-Aware Hybrid CNN--Transformer Ensemble for Multilingual,
-            Writer-Disjoint Offline Signature Verification},
-  author = {Ranjan, Ravi},
-  school = {Bishop's University},
-  year   = {2026}
-}
+## Reproducing
+
+```bash
+pip install torch torchvision scikit-learn pandas matplotlib pillow
+python steel_defect_detection.py --data /path/to/severstal-steel-defect-detection
 ```
 
-## License
+Feature extraction runs at roughly 100 images/minute on an Apple M-series laptop (MPS). Requires `PYTORCH_ENABLE_MPS_FALLBACK=1` — DINOv2's position-embedding interpolation uses an operation not implemented for MPS.
 
-Thesis released under CC BY-SA 4.0.
-
-## Author
-
-**Ravi Ranjan** — M.Sc. Computer Science, Bishop's University
+Random seed fixed at 42 throughout. All splits verified non-overlapping.
