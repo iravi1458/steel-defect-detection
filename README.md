@@ -12,7 +12,7 @@ There is no training loop. A frozen self-supervised backbone (DINOv2) converts e
 
 **Out of every 100 defective strips, the system flags 93 while stopping the line unnecessarily on 5% of good strips. Tighten it to 1% unnecessary stops and it still catches 81.**
 
-Cross-validated AUROC: **0.9748** (5-fold, range 0.968–0.979). Held-out test AUROC: 0.9884.
+Cross-validated AUROC: **0.9747** (5-fold, range 0.968–0.979). Held-out test AUROC: 0.9884.
 
 *Reading the numbers:* **recall** is the share of real defects caught. **False-positive rate** is the share of good strips wrongly flagged — each one costs an operator a few minutes of review. The two move together: catching more defects always means reviewing more good material. **AUROC** summarises performance across every possible threshold, where 0.5 is a coin flip and 1.0 is perfect.
 
@@ -42,7 +42,7 @@ Cross-validated AUROC: **0.9748** (5-fold, range 0.968–0.979). Held-out test A
 |---|---|---|---|
 | 1 | 897 | 0.81% | 94.0% |
 | 2 | 247 | 0.72% | 94.0% |
-| 3 | 5,150 | 2.92% | 99.0% |
+| 3 | 5,150 | 2.92% | 100.0% |
 | 4 | 801 | 6.19% | 99.0% |
 
 Evaluated on 100 held-out images per class, none seen in training.
@@ -104,7 +104,7 @@ The first configuration used 300 clean + 300 defective images. Tripling that pro
 
 | | 300 + 300 | 1,000 + 1,000 |
 |---|---|---|
-| AUROC (5-fold CV) | 0.9536 | **0.9748** |
+| AUROC (5-fold CV) | 0.9536 | **0.9747** |
 | Recall @1% FPR | 66.0% | **81.0%** |
 | Recall @5% FPR | 78.0% | **93.0%** |
 | Class 2 recall @5% FPR | 72.0% | **94.0%** |
@@ -125,12 +125,12 @@ This was tested using the same frozen features, so the only variable is whether 
 
 **Result.**
 
-| Method | AUROC | Recall @1% FPR | Recall @5% FPR |
-|---|---|---|---|
-| Supervised | **0.988** | 81.0% | **93.0%** |
-| Unsupervised | 0.754 | 1.5% | 11.5% |
+| Method | AUROC | Recall @1% FPR | Recall @5% FPR | Recall @10% FPR |
+|---|---|---|---|---|
+| Supervised | **0.988** | 81.0% | **93.0%** | 96.0% |
+| Unsupervised | 0.750 | 1.0% | 12.0% | 35.0% |
 
-Per-class recall @5% FPR was 0.0% / 1.0% / 7.0% / 14.0% for classes 1–4 — effectively blind at any usable operating point.
+At a 1% false-alarm rate — the tightest setting a production line would plausibly run — the unsupervised method catches one defect in a hundred. It is effectively blind at any usable operating point.
 
 ### Why it failed: the unannotated images are not defect-free
 
@@ -149,7 +149,7 @@ The top-scoring "clean" images show extensive surface flaking and spalling. Some
 | 224×224 squashed input, 5k memory bank | 0.661 |
 | 252×1596, 2.5k bank | 0.529 |
 | 252×1596, 50k bank | 0.728 |
-| 252×1596, 150k bank | **0.754** |
+| 252×1596, 150k bank | **0.750** |
 | 150k bank, training set filtered to cleanest 70% | 0.728 |
 
 Aspect ratio matters more than expected. Memory bank size matters more still — at 2,565 entries the bank was too sparse to cover normal variation and performance fell near chance.
